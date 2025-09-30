@@ -829,9 +829,9 @@ mod tests {
         // (different runtimes are created for each test),
         // we don't share the storage and tests must be run sequentially.
         FairPostgresStorage::setup(&pool).await.unwrap();
-        let config = Config::new("apalis-tests").set_buffer_size(1);
+        let config = Config::new("apalis-fair-postgres-tests").set_buffer_size(10);
         let mut storage = FairPostgresStorage::new_with_config(pool, config);
-        cleanup(&mut storage, &WorkerId::new("test-worker")).await;
+        cleanup(&mut storage, &WorkerId::new("fair-test-worker")).await;
         storage
     }
 
@@ -880,7 +880,7 @@ mod tests {
         storage: &mut FairPostgresStorage<Email>,
         last_seen: Timestamp,
     ) -> Worker<Context> {
-        let worker_id = WorkerId::new("test-worker");
+        let worker_id = WorkerId::new("fair-test-worker");
 
         storage
             .keep_alive_at::<DummyService>(&worker_id, last_seen)
@@ -893,6 +893,21 @@ mod tests {
 
     async fn register_worker(storage: &mut FairPostgresStorage<Email>) -> Worker<Context> {
         register_worker_at(storage, Utc::now().timestamp()).await
+    }
+
+    // Generic worker registration for non-Email job types used in fairness tests.
+    async fn register_worker_generic<T>(
+        storage: &mut FairPostgresStorage<T>,
+        name: &str,
+    ) -> Worker<Context> {
+        let worker_id = WorkerId::new(name);
+        storage
+            .keep_alive_at::<DummyService>(&worker_id, Utc::now().timestamp())
+            .await
+            .expect("failed to register worker");
+        let wrk = Worker::new(worker_id, Context::default());
+        wrk.start();
+        wrk
     }
 
     async fn push_email(storage: &mut FairPostgresStorage<Email>, email: Email) -> TaskId {
@@ -925,6 +940,12 @@ mod tests {
     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
     struct UserIdentity {
         user_id: String,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+    struct FlatUserJob {
+        user_id: String,
+        payload: String,
     }
 
     #[tokio::test]
@@ -968,8 +989,7 @@ mod tests {
             .await
             .unwrap();
 
-        let worker = Worker::new(WorkerId::new("fair-test-worker"), Context::default());
-        worker.start();
+        let worker = register_worker_generic(&mut storage, "fair-test-worker").await;
 
         // Fetch first batch of jobs (should have one from each user)
         let jobs = storage.fetch_next(worker.id()).await.unwrap();
@@ -1019,6 +1039,87 @@ mod tests {
         let jobs_3 = storage.fetch_next(worker.id()).await.unwrap();
         assert_eq!(jobs_3.len(), 1);
         assert_eq!(jobs_3[0].args.identity.user_id, "user-1");
+    }
+
+    #[tokio::test]
+    async fn test_fair_fetching_top_level_user_id() {
+        let mut storage: FairPostgresStorage<FlatUserJob> = setup().await;
+
+        // Push 3 jobs for user "flat-user-1"
+        for i in 0..3 {
+            storage
+                .push(FlatUserJob {
+                    user_id: "flat-user-1".to_string(),
+                    payload: format!("job-{}", i),
+                })
+                .await
+                .unwrap();
+        }
+
+        // Push 2 jobs for user "flat-user-2"
+        for i in 0..2 {
+            storage
+                .push(FlatUserJob {
+                    user_id: "flat-user-2".to_string(),
+                    payload: format!("job-{}", i),
+                })
+                .await
+                .unwrap();
+        }
+
+        // Push 1 job for user "flat-user-3"
+        storage
+            .push(FlatUserJob {
+                user_id: "flat-user-3".to_string(),
+                payload: "job-0".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let worker = register_worker_generic(&mut storage, "flat-fair-worker").await;
+
+        // Fetch first batch of jobs (should have one from each user)
+        let jobs = storage.fetch_next(worker.id()).await.unwrap();
+        assert_eq!(jobs.len(), 3);
+
+        let user_ids: HashSet<String> = jobs.iter().map(|j| j.args.user_id.clone()).collect();
+        assert!(user_ids.contains("flat-user-1"));
+        assert!(user_ids.contains("flat-user-2"));
+        assert!(user_ids.contains("flat-user-3"));
+
+        // Ack the jobs to remove them from the queue for the next fetch
+        for job in jobs {
+            let ctx = job.parts.context.clone();
+            let task_id = job.parts.task_id.clone();
+            let attempt = job.parts.attempt.clone();
+            let response = Response::success((), task_id, attempt);
+            storage.ack(&ctx, &response).await.unwrap();
+        }
+        // Wait for ack to be processed
+        apalis_core::sleep(Duration::from_millis(500)).await;
+
+        // Fetch second batch (should have one from user-1 and user-2)
+        let jobs_2 = storage.fetch_next(worker.id()).await.unwrap();
+        assert_eq!(jobs_2.len(), 2);
+        let user_ids_2: HashSet<String> = jobs_2.iter().map(|j| j.args.user_id.clone()).collect();
+        assert!(user_ids_2.contains("flat-user-1"));
+        assert!(user_ids_2.contains("flat-user-2"));
+        assert!(!user_ids_2.contains("flat-user-3"));
+
+        // Ack the jobs
+        for job in jobs_2 {
+            let ctx = job.parts.context.clone();
+            let task_id = job.parts.task_id.clone();
+            let attempt = job.parts.attempt.clone();
+            let response = Response::success((), task_id, attempt);
+            storage.ack(&ctx, &response).await.unwrap();
+        }
+        apalis_core::sleep(Duration::from_millis(500)).await;
+
+        // Fetch third batch (should have the last one from user-1)
+        let jobs_3 = storage.fetch_next(worker.id()).await.unwrap();
+        assert_eq!(jobs_3.len(), 1);
+        assert_eq!(jobs_3[0].args.user_id, "flat-user-1");
     }
 
     #[tokio::test]
