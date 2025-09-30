@@ -5,15 +5,28 @@ CREATE OR REPLACE FUNCTION apalis.get_fair_jobs(
 ) RETURNS SETOF apalis.jobs AS $$
 BEGIN
     RETURN QUERY
-    WITH ranked_jobs AS (
+    WITH locked_jobs AS (
         SELECT
             id,
-            ROW_NUMBER() OVER(PARTITION BY job -> 'identity' ->> 'user_id' ORDER BY run_at ASC, id ASC) as rn
+            run_at,
+            job
         FROM apalis.jobs
         WHERE
             status = 'Pending'
             AND run_at <= NOW()
             AND job_type = v_job_type
+        ORDER BY run_at ASC, id ASC
+        FOR UPDATE SKIP LOCKED
+    ),
+    ranked_jobs AS (
+        SELECT
+            id,
+            run_at,
+            ROW_NUMBER() OVER (
+                PARTITION BY COALESCE(job -> 'identity' ->> 'user_id', id::text)
+                ORDER BY run_at ASC, id ASC
+            ) AS rn
+        FROM locked_jobs
     ),
     fair_jobs AS (
         SELECT id
@@ -21,7 +34,6 @@ BEGIN
         WHERE rn = 1
         ORDER BY run_at ASC, id ASC
         LIMIT v_job_count
-        FOR UPDATE SKIP LOCKED
     )
     UPDATE apalis.jobs
     SET
