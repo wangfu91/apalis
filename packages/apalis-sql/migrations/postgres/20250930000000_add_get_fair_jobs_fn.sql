@@ -1,4 +1,3 @@
-```sql
 CREATE OR REPLACE FUNCTION apalis.get_fair_jobs(
     worker_id TEXT,
     v_job_type TEXT,
@@ -34,4 +33,3 @@ BEGIN
     RETURNING *;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
-```
