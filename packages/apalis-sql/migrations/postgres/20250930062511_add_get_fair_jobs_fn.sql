@@ -55,7 +55,14 @@ BEGIN
             id,
             run_at,
             ROW_NUMBER() OVER (
-                PARTITION BY COALESCE(job -> 'identity' ->> 'user_id', id::text)
+                -- The id::text fallback guarantees every job has a partition key. 
+                -- If a job lacks user_id, we treat that job as its own “user”, 
+                -- preventing multiple unknown-user jobs from crowding the batch.
+                PARTITION BY COALESCE(
+                    job -> 'identity' ->> 'user_id',  -- case 1: 'user_id' is nested in 'identity'
+                    job ->> 'user_id',                -- case 2: 'user_id' is at top-level
+                    id::text                          -- fallback
+                )
                 ORDER BY priority DESC, run_at ASC, id ASC
             ) AS rn
         FROM locked_jobs
