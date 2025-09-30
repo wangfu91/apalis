@@ -1,3 +1,7 @@
+// This file is basically a copy of postgres.rs with some naming changes and fairness tests addition.
+// The core logic for fetching jobs in a fair manner is implemented in the SQL function `apalis.get_fair_jobs` in the `migrations/postgres/20250930062511_add_get_fair_jobs_fn.sql` file.
+// You can view what has changed by comparing this file to postgres.rs using `opendiff fair_postgres.rs postgres.rs` on macOS or a similar tool on other OSes.
+
 //! # apalis-postgres
 //!
 //! Allows using postgres as a Backend
