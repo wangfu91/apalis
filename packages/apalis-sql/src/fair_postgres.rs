@@ -1028,7 +1028,7 @@ mod tests {
 
         let worker = register_worker(&mut storage).await;
 
-        let job = consume_one(&mut storage, &worker.id()).await;
+        let job = consume_one(&mut storage, worker.id()).await;
         let job_id = &job.parts.task_id;
 
         // Refresh our job
@@ -1047,11 +1047,11 @@ mod tests {
 
         let worker = register_worker(&mut storage).await;
 
-        let job = consume_one(&mut storage, &worker.id()).await;
+        let job = consume_one(&mut storage, worker.id()).await;
         let job_id = &job.parts.task_id;
 
         storage
-            .kill(&worker.id(), job_id)
+            .kill(worker.id(), job_id)
             .await
             .expect("failed to kill job");
 
@@ -1071,7 +1071,7 @@ mod tests {
 
         let worker = register_worker_at(&mut storage, six_minutes_ago.timestamp()).await;
 
-        let job = consume_one(&mut storage, &worker.id()).await;
+        let job = consume_one(&mut storage, worker.id()).await;
         storage
             .reenqueue_orphaned(1, five_minutes_ago)
             .await
@@ -1099,7 +1099,7 @@ mod tests {
 
         let worker = register_worker_at(&mut storage, four_minutes_ago.timestamp()).await;
 
-        let job = consume_one(&mut storage, &worker.id()).await;
+        let job = consume_one(&mut storage, worker.id()).await;
         let ctx = &job.parts.context;
 
         assert_eq!(*ctx.status(), State::Running);
