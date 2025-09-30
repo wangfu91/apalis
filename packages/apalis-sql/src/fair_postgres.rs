@@ -829,7 +829,7 @@ mod tests {
         // (different runtimes are created for each test),
         // we don't share the storage and tests must be run sequentially.
         FairPostgresStorage::setup(&pool).await.unwrap();
-        let config = Config::new(std::any::type_name::<T>()).set_buffer_size(10);
+        let config = Config::new("apalis-tests").set_buffer_size(1);
         let mut storage = FairPostgresStorage::new_with_config(pool, config);
         cleanup(&mut storage, &WorkerId::new("test-worker")).await;
         storage
