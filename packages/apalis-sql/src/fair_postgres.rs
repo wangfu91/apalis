@@ -985,9 +985,11 @@ mod tests {
 
         // Ack the jobs to remove them from the queue for the next fetch
         for job in jobs {
-            let response: Response<Result<(), Error>> =
-                Response::new(Ok(()), worker.id(), &job.parts.task_id);
-            storage.ack(&job.parts.context, &response).await.unwrap();
+            let ctx = job.parts.context.clone();
+            let task_id = job.parts.task_id.clone();
+            let attempt = job.parts.attempt.clone();
+            let response = Response::success((), task_id, attempt);
+            storage.ack(&ctx, &response).await.unwrap();
         }
         // Wait for ack to be processed
         apalis_core::sleep(Duration::from_millis(500)).await;
@@ -1005,9 +1007,11 @@ mod tests {
 
         // Ack the jobs
         for job in jobs_2 {
-            let response: Response<Result<(), Error>> =
-                Response::new(Ok(()), worker.id(), &job.parts.task_id);
-            storage.ack(&job.parts.context, &response).await.unwrap();
+            let ctx = job.parts.context.clone();
+            let task_id = job.parts.task_id.clone();
+            let attempt = job.parts.attempt.clone();
+            let response = Response::success((), task_id, attempt);
+            storage.ack(&ctx, &response).await.unwrap();
         }
         apalis_core::sleep(Duration::from_millis(500)).await;
 
